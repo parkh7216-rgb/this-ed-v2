@@ -2,6 +2,8 @@
 'use strict';
 const $ = document.getElementById('app');
 const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const apiBase = typeof window.MC_API_BASE_URL === 'string' ? window.MC_API_BASE_URL.trim().replace(/\/+$/, '') : '';
+const apiEndpoint = path => `${apiBase}${path}`;
 const LS = { get(k, fallback) { try { const value = localStorage.getItem(k); return value ? JSON.parse(value) : fallback; } catch { return fallback; } }, set(k, value) { try { localStorage.setItem(k, JSON.stringify(value)); } catch {} } };
 const shuffle = values => { const out = [...values]; for (let i = out.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [out[i], out[j]] = [out[j], out[i]]; } return out; };
 const pct = (correct, total) => total ? Math.round(correct / total * 100) : 0;
@@ -135,9 +137,10 @@ function previewSelectedImage(file) {
 }
 async function explain405() {
   let apiReady=false;
-  try{const health=await fetch('/api/health',{cache:'no-store'});if(health.ok){const state=await health.json();apiReady=state?.ok===true;}}catch{}
-  if(location.hostname.endsWith('.github.io'))return `현재 주소 ${location.origin}는 GitHub Pages 정적 사이트라 AI 서버에 POST 요청을 전달하지 못해요(405). 이 저장소의 Pages 주소에서는 문제 생성이 되지 않습니다. Node.js 서버가 연결된 Manus Preview에서 열어 주세요.`;
-  if(!apiReady)return `현재 주소 ${location.origin}에서 문제 생성 서버를 찾지 못했어요(405). 정적 호스팅 주소일 수 있습니다. Node.js 서버가 연결된 Manus Preview에서 열어 주세요.`;
+  try{const health=await fetch(apiEndpoint('/api/health'),{cache:'no-store'});if(health.ok){const state=await health.json();apiReady=state?.ok===true;}}catch{}
+  if(location.hostname.endsWith('.github.io')&&!apiBase)return `현재 주소 ${location.origin}는 정적 GitHub Pages라 자체 Node.js API가 없고, 연결된 API 주소도 설정되지 않았어요(405). 앱을 새로고침하거나 서버 연결 상태를 확인해 주세요.`;
+  if(!apiReady)return `현재 주소 ${location.origin}에서 문제 생성 서버를 찾지 못했어요(405). 정적 호스팅 주소일 수 있습니다. Node.js 서버가 연결된 Manus 앱에서 다시 열어 주세요.`;
+  if(location.hostname.endsWith('.github.io'))return 'Pages에서 연결된 Node.js 서버는 응답하지만 문제 생성 요청을 받지 않았어요(405). 잠시 후 새로고침해 다시 시도해 주세요.';
   return '문제 생성 서버는 응답하지만 이 요청 방식을 받지 않았어요(405). 앱을 새로고침해 최신 화면으로 다시 시도해 주세요.';
 }
 function mine(message='', error=false) {
@@ -169,7 +172,7 @@ async function generatePassage(item,imageData=null) {
   const button=document.getElementById('generateButton');if(button)button.disabled=true;
   const message=document.getElementById('generationMessage');if(message){message.classList.remove('error');message.innerHTML='<span class="spinner"></span>지문을 읽고, 근거가 있는 문제를 만들고 있어요.';}
   try {
-    const response=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:item.title,passage:imageData?'':item.text,...(imageData?{image:imageData}:{})})});
+    const response=await fetch(apiEndpoint('/api/generate'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:item.title,passage:imageData?'':item.text,...(imageData?{image:imageData}:{})})});
     let data={};try{data=await response.json();}catch{}
     if(response.status===405)throw new Error(await explain405());
     if(!response.ok){

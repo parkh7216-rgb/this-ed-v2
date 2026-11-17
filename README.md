@@ -22,4 +22,4 @@ node --test tests/server.test.js
 
 ## 배포 참고
 
-이 앱의 AI 문제 생성은 Node.js 서버의 `POST /api/generate`를 사용합니다. GitHub Pages는 정적 파일만 제공하며 Node.js API가 없으므로, Pages 주소에서 문제 만들기를 누르면 서버가 POST 요청을 거부해 405 오류가 납니다. 현재 `this-ed-v2` Pages에서 이 동작을 확인했으며, 이는 이미지 기능과 무관한 호스팅 한계입니다. 서버가 연결된 Manus Preview에서는 해당 API가 동작합니다. Pages 주소에서 AI 기능을 쓰려면 별도 백엔드를 구성·게시하고 프런트엔드를 그 백엔드에 연결해야 합니다. 저장소에 소스 코드를 올리는 것만으로 Node.js 서버가 배포되지는 않습니다.
+이 앱의 AI 문제 생성은 Node.js 서버의 `POST /api/generate`를 사용합니다. GitHub Pages는 정적 파일만 제공하므로, 공개 페이지는 Manus에 별도로 게시한 Node.js API를 호출합니다. 백엔드는 `/api/health`와 `/api/generate`를 제공하고 `https://parkh7216-rgb.github.io` origin만 CORS로 허용합니다. API 자격 증명은 서버 런타임에서만 사용하며 브라우저 설정과 공개 저장소에 넣지 않습니다. Manus Preview와 게시 앱은 자체 서버의 상대 `/api` 경로를 사용합니다. GitHub 저장소에 코드를 올리는 것만으로 Node.js 서버가 배포되지는 않으므로, Manus 컨테이너 게시와 Pages 갱신이 각각 필요합니다.

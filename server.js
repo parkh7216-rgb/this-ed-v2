@@ -330,8 +330,9 @@ async function generate(title, passage, image, options, downstream) {
   }
   return { status: 502, message: 'AI 서비스에서 문제를 만들지 못했습니다. 다시 시도해 주세요.' };
 }
+const DEFAULT_PAGES_ORIGIN = 'https://parkh7216-rgb.github.io';
 function createServer(settings = {}) {
-  const options = { aiTimeoutMs: 90000, rateWindowMs: 60000, rateMax: 6, maxConcurrent: 8, ...settings };
+  const options = { aiTimeoutMs: 90000, rateWindowMs: 60000, rateMax: 6, maxConcurrent: 8, pagesOrigin: DEFAULT_PAGES_ORIGIN, ...settings };
   const clients = new Map(); let active = 0;
   function rateLimit(req, res) {
     const now = Date.now(), key = req.socket.remoteAddress || 'unknown';
@@ -350,6 +351,28 @@ function createServer(settings = {}) {
   const server = http.createServer(async (req, res) => {
     try {
       const pathname = new URL(req.url, 'http://localhost').pathname;
+      const apiRoute = pathname === '/api/health' || pathname === '/api/generate';
+      if (pathname.startsWith('/api/')) {
+        res.setHeader('Vary', 'Origin');
+        if (req.headers.origin === options.pagesOrigin) res.setHeader('Access-Control-Allow-Origin', options.pagesOrigin);
+      }
+      if (req.method === 'OPTIONS' && pathname.startsWith('/api/')) {
+        if (!apiRoute) return error(res, 404, '요청한 API를 찾을 수 없습니다.');
+        if (req.headers.origin !== options.pagesOrigin) return error(res, 403, '허용되지 않은 웹사이트입니다.');
+        const methods = pathname === '/api/health' ? ['GET', 'HEAD'] : ['POST'];
+        const requestedMethod = req.headers['access-control-request-method'];
+        if (!methods.includes(requestedMethod)) return error(res, 405, '지원하지 않는 요청 방식입니다.', { Allow: methods.join(', ') });
+        const requestedHeaders = String(req.headers['access-control-request-headers'] || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
+        if (requestedHeaders.some(value => value !== 'content-type')) return error(res, 403, '허용되지 않은 요청 헤더입니다.');
+        res.writeHead(204, {
+          'Access-Control-Allow-Origin': options.pagesOrigin,
+          'Access-Control-Allow-Methods': methods.join(', '),
+          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Max-Age': '600',
+          Vary: 'Origin',
+        });
+        return res.end();
+      }
       if (pathname === '/api/health') {
         if (req.method !== 'GET' && req.method !== 'HEAD') return error(res, 405, '지원하지 않는 요청 방식입니다.', { Allow: 'GET, HEAD' });
         return json(res, 200, { ok: true });

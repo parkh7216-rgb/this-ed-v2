@@ -41,6 +41,36 @@ test('health, static allowlist, private paths and HTTP methods', async () => wit
   assert.equal((await fetch(base + '/anything')).status, 404);
 }));
 
+test('GitHub Pages CORS allows only its origin and expected API preflight', async () => withServer({}, async base => {
+  const origin = 'https://parkh7216-rgb.github.io';
+  let response = await fetch(base + '/api/health', { headers: { Origin: origin } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('access-control-allow-origin'), origin);
+  assert.match(response.headers.get('vary'), /Origin/i);
+
+  response = await fetch(base + '/api/generate', {
+    method: 'OPTIONS',
+    headers: { Origin: origin, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' },
+  });
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), origin);
+  assert.equal(response.headers.get('access-control-allow-methods'), 'POST');
+  assert.equal(response.headers.get('access-control-allow-headers'), 'Content-Type');
+
+  response = await fetch(base + '/api/generate', {
+    method: 'OPTIONS',
+    headers: { Origin: 'https://attacker.example', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' },
+  });
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.get('access-control-allow-origin'), null);
+
+  response = await fetch(base + '/api/generate', {
+    method: 'OPTIONS',
+    headers: { Origin: origin, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization' },
+  });
+  assert.equal(response.status, 403);
+}));
+
 test('request input validation and JSON response errors are localized', async () => withServer({}, async base => {
   const oldUrl = process.env.MANUS_API_URL, oldKey = process.env.MANUS_API_KEY;
   delete process.env.MANUS_API_URL; delete process.env.MANUS_API_KEY;
