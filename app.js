@@ -33,6 +33,7 @@ let profile = LS.get('mc_p', null) || { nick: '', id: '' };
 let stats = LS.get('mc_s', null) || { t:0, c:0, k:{}, d:{} };
 let friends = LS.get('mc_f2', []);
 let passages = LS.get('mc_passages', []);
+let imagePreviewUrl = null;
 const firebase = window.MC_FB || {};
 const firebaseEnabled = () => Boolean(firebase.apiKey && firebase.projectId);
 function persistStats() { LS.set('mc_s', stats); }
@@ -95,33 +96,95 @@ function passageHome() {
     <section class="panel center"><span class="tag">원문 대기</span><h2>아직 추가된 지문이 없어요.</h2><p class="subheading">지문은 보내주시는 자료를 확인한 뒤 등록하겠습니다. 맞춤법 원칙·보기형 문제는 모두 맞춤법 탭으로 옮겼어요.</p><div class="actions" style="justify-content:center"><button class="btn secondary" id="toMine">내 지문으로 문제 만들기 →</button></div></section>`, 'passages');
   document.getElementById('toMine').onclick=()=>openTab('mine');
 }
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const MAX_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
+function readAsDataUrl(blob) { return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('사진 파일을 읽지 못했어요. 다시 선택해 주세요.'));reader.readAsDataURL(blob);}); }
+async function preparePassageImage(file) {
+  if (!['image/jpeg','image/png','image/webp'].includes(file.type)) throw new Error('JPEG, PNG, WebP 사진만 올릴 수 있어요.');
+  if (!file.size) throw new Error('사진 파일이 비어 있어요. 다시 선택해 주세요.');
+  if (file.size > MAX_SOURCE_IMAGE_BYTES) throw new Error('원본 사진은 20MB 이하로 올려 주세요.');
+  let bitmap, fallbackUrl;
+  try {
+    if (typeof createImageBitmap === 'function') bitmap = await createImageBitmap(file);
+    else {
+      fallbackUrl = URL.createObjectURL(file);
+      bitmap = await new Promise((resolve,reject)=>{const image=new Image();image.onload=()=>resolve(image);image.onerror=()=>reject(new Error('사진을 열 수 없어요. JPEG, PNG, WebP로 다시 선택해 주세요.'));image.src=fallbackUrl;});
+    }
+    const width=bitmap.width||bitmap.naturalWidth,height=bitmap.height||bitmap.naturalHeight,edge=Math.max(width,height);
+    if(!width||!height||width*height>48000000)throw new Error('사진 해상도가 너무 커요. 더 작은 사진을 선택해 주세요.');
+    for (let factor=1;factor>=0.45;factor*=0.82) {
+      const scale=Math.min(1,2600/edge)*factor;
+      const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round((bitmap.width||bitmap.naturalWidth)*scale));canvas.height=Math.max(1,Math.round((bitmap.height||bitmap.naturalHeight)*scale));
+      const context=canvas.getContext('2d');if(!context)throw new Error('사진을 처리하지 못했어요.');
+      context.drawImage(bitmap,0,0,canvas.width,canvas.height);
+      const quality=Math.max(0.72,0.92-(1-factor)*0.4),blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));
+      if(blob&&blob.size<=MAX_IMAGE_BYTES)return readAsDataUrl(blob);
+    }
+    throw new Error('사진을 4MB 이하로 줄이지 못했어요. 더 작은 사진을 선택해 주세요.');
+  } catch(error) {
+    if(error.message?.includes('사진'))throw error;
+    throw new Error('사진을 열거나 줄이지 못했어요. JPEG, PNG, WebP 사진으로 다시 선택해 주세요.');
+  } finally { bitmap?.close?.();if(fallbackUrl)URL.revokeObjectURL(fallbackUrl); }
+}
+function releaseImagePreview() { if(imagePreviewUrl){URL.revokeObjectURL(imagePreviewUrl);imagePreviewUrl=null;} }
+function previewSelectedImage(file) {
+  releaseImagePreview();const preview=document.getElementById('imagePreview');if(!preview)return;
+  if(!file){preview.replaceChildren();return;}
+  imagePreviewUrl=URL.createObjectURL(file);
+  preview.innerHTML=`<img src="${esc(imagePreviewUrl)}" alt="선택한 지문 사진 미리보기"><span>${esc(file.name)}</span>`;
+}
+async function explain405() {
+  let apiReady=false;
+  try{const health=await fetch('/api/health',{cache:'no-store'});if(health.ok){const state=await health.json();apiReady=state?.ok===true;}}catch{}
+  if(location.hostname.endsWith('.github.io'))return `현재 주소 ${location.origin}는 GitHub Pages 정적 사이트라 AI 서버에 POST 요청을 전달하지 못해요(405). 이 저장소의 Pages 주소에서는 문제 생성이 되지 않습니다. Node.js 서버가 연결된 Manus Preview에서 열어 주세요.`;
+  if(!apiReady)return `현재 주소 ${location.origin}에서 문제 생성 서버를 찾지 못했어요(405). 정적 호스팅 주소일 수 있습니다. Node.js 서버가 연결된 Manus Preview에서 열어 주세요.`;
+  return '문제 생성 서버는 응답하지만 이 요청 방식을 받지 않았어요(405). 앱을 새로고침해 최신 화면으로 다시 시도해 주세요.';
+}
 function mine(message='', error=false) {
   const source=passages.find(item=>item.id===new URLSearchParams(location.search).get('passage'));
   shell(`${heading('MY PASSAGES','내꺼','내가 고른 지문을 넣으면 AI가 지문에 근거한 문제를 만들어요.')}
-    <section class="panel"><div class="panel-title"><h2>새 지문 추가하기</h2><span class="tag ai">AI 독해 문제</span></div><p class="small">지문을 붙여넣으면 그 글만 근거로 삼아 고난도 5지선다 독해 문항 5개와 정답·선택지별 해설을 만들어요. 지문과 문제는 이 기기에 저장됩니다.</p><form id="passageForm"><label class="form-label" for="passageTitle">지문 제목</label><input id="passageTitle" maxlength="100" placeholder="예: 우리말의 변화" required><label class="form-label" for="passageText">지문 내용</label><textarea id="passageText" minlength="40" maxlength="6000" placeholder="분량 40~6,000자. 지문을 그대로 붙여 넣어 주세요." required></textarea><div class="actions"><button class="btn" id="generateButton">문제 만들기</button><span class="small">문제 생성에는 인터넷 연결이 필요해요.</span></div><div id="generationMessage" class="message ${error?'error':''}">${esc(message)}</div></form></section>
-    ${source?`<section class="panel"><div class="panel-title"><h2>${esc(source.title)}</h2><span class="tag ai">${source.questions?.length?`${source.questions.length}문항 생성됨`:'문제 생성 대기'}</span></div><p class="small">${esc(source.text.slice(0,180))}${source.text.length>180?'…':''}</p><div class="actions">${source.questions?.length?'<button class="btn" id="playSaved">내 문제 풀기 →</button>':''}<button class="btn secondary" id="retryGenerate">AI로 다시 만들기</button><button class="btn danger" id="deletePassage">삭제</button></div></section>`:''}
+    <section class="panel"><div class="panel-title"><h2>새 지문 추가하기</h2><span class="tag ai">AI 독해 문제</span></div><p class="small">지문을 붙여넣거나 사진으로 올리면 그 원문만 근거로 고난도 5지선다 독해 문항 5개와 정답·선택지별 해설을 만들어요. 둘 중 한 가지 입력 방식을 선택해 주세요.</p><form id="passageForm"><label class="form-label" for="passageTitle">지문 제목</label><input id="passageTitle" maxlength="100" placeholder="예: 우리말의 변화" required><label class="form-label" for="passageText">지문 직접 입력</label><textarea id="passageText" maxlength="6000" placeholder="분량 40~6,000자. 지문을 그대로 붙여 넣어 주세요."></textarea><div class="input-divider"><span>또는 사진으로 넣기</span></div><label class="form-label" for="passageImage">지문 사진</label><input id="passageImage" class="file-input" type="file" accept="image/jpeg,image/png,image/webp" capture="environment"><div id="imagePreview" class="image-preview" aria-live="polite"></div><p class="small">JPEG·PNG·WebP, 원본 최대 20MB(전송 전 자동 축소). 사진 원본은 저장하지 않고, 생성된 원문과 문제만 이 기기에 저장합니다.</p><div class="actions"><button class="btn" id="generateButton" type="submit">문제 만들기</button><span class="small">문제 생성에는 인터넷 연결이 필요해요.</span></div><div id="generationMessage" class="message ${error?'error':''}">${esc(message)}</div></form></section>
+    ${source?`<section class="panel"><div class="panel-title"><h2>${esc(source.title)}</h2><span class="tag ai">${source.questions?.length?`${source.questions.length}문항 생성됨`:'문제 생성 대기'}</span></div><p class="small">${esc(source.text.slice(0,180))}${source.text.length>180?'…':''}</p><details class="recognized-passage"><summary>읽은 지문 전체 확인</summary><div class="passage">${esc(source.text)}</div></details><div class="actions">${source.questions?.length?'<button class="btn" id="playSaved">내 문제 풀기 →</button>':''}<button class="btn secondary" id="retryGenerate">AI로 다시 만들기</button><button class="btn danger" id="deletePassage">삭제</button></div></section>`:''}
     <div class="section-head"><div><h2>내가 저장한 지문</h2><p>저장한 지문은 이 기기에서 언제든 다시 열 수 있어요.</p></div></div>
     <div class="passage-list">${passages.length?passages.map(item=>`<article class="passage-card"><span class="tag ai">${item.questions?.length?'문제 준비 완료':'문제 생성 대기'}</span><h3>${esc(item.title)}</h3><p>${esc(item.text.slice(0,160))}${item.text.length>160?'…':''}</p><div class="actions"><button class="btn secondary" data-open-passage="${esc(item.id)}">열기 · 풀기 →</button><button class="btn danger" data-delete-passage="${esc(item.id)}">삭제</button></div></article>`).join(''):'<div class="empty">아직 저장한 지문이 없어요.<br>위에서 첫 지문을 추가해 보세요.</div>'}</div>
-    <p class="footer-note">사진과 문서는 한 장씩 올려도 괜찮아요. 원문에 없는 지문을 제가 임의로 만든 뒤 교과서 원문이라고 표시하지 않겠습니다.</p>`, 'mine');
-  document.getElementById('passageForm').addEventListener('submit', event=>{event.preventDefault();const title=document.getElementById('passageTitle').value.trim();const text=document.getElementById('passageText').value.trim();if(title&&text.length>=40)generatePassage({id:`${Date.now()}-${Math.random().toString(36).slice(2,7)}`,title,text,createdAt:new Date().toISOString(),questions:[]});});
+    <p class="footer-note">사진은 AI 요청 중에만 사용하고 원본 이미지를 저장하지 않아요. 이미지에서 읽은 지문을 확인한 뒤 문제를 풀어 보세요. 사용자가 보내지 않은 지문은 추가하지 않습니다.</p>`, 'mine');
+  const draftInput=document.createElement('input');draftInput.type='hidden';draftInput.id='passageDraftId';document.getElementById('passageForm').append(draftInput);
+  if(imagePreviewUrl)releaseImagePreview();
+  document.getElementById('passageImage').addEventListener('change',event=>previewSelectedImage(event.target.files?.[0]));
+  document.getElementById('passageForm').addEventListener('submit',async event=>{
+    event.preventDefault();const title=document.getElementById('passageTitle').value.trim();const text=document.getElementById('passageText').value.trim();const file=document.getElementById('passageImage').files?.[0];const notice=document.getElementById('generationMessage');
+    if((!text&&!file)||(text&&file)){notice.classList.add('error');notice.textContent=text?'지문 직접 입력과 사진 중 한 가지만 선택해 주세요.':'지문을 붙여넣거나 사진을 선택해 주세요.';return;}
+    if(text&&(text.length<40||text.length>6000)){notice.classList.add('error');notice.textContent='지문은 40~6,000자로 입력해 주세요.';return;}
+    const draftInput=document.getElementById('passageDraftId'),item={id:draftInput.value||`${Date.now()}-${Math.random().toString(36).slice(2,7)}`,title,text,createdAt:new Date().toISOString(),questions:[]};draftInput.value=item.id;
+    if(file){const button=document.getElementById('generateButton');if(button)button.disabled=true;notice.classList.remove('error');notice.innerHTML='<span class="spinner"></span>사진을 읽을 수 있게 준비하고 있어요…';try{const image=await preparePassageImage(file);await generatePassage(item,image);}catch(error){notice.classList.add('error');notice.textContent=error.message||'사진을 처리하지 못했어요.';if(button)button.disabled=false;}}
+    else await generatePassage(item);
+  });
   document.querySelectorAll('[data-open-passage]').forEach(button=>button.addEventListener('click',()=>{history.replaceState(null,'',`?passage=${encodeURIComponent(button.dataset.openPassage)}`);mine();}));
   document.querySelectorAll('[data-delete-passage]').forEach(button=>button.addEventListener('click',()=>deletePassage(button.dataset.deletePassage)));
   if(source){const play=document.getElementById('playSaved');if(play)play.onclick=()=>startQuiz(makeMixedSet(source.questions,source.questions.length,source.title));document.getElementById('retryGenerate').onclick=()=>generatePassage(source);document.getElementById('deletePassage').onclick=()=>deletePassage(source.id);}
 }
-async function generatePassage(item) {
-  if(item.text.length<40||item.text.length>6000)return mine('지문은 40~6,000자로 넣어 주세요.',true);
-  const existing=passages.findIndex(entry=>entry.id===item.id); if(existing<0)passages.unshift(item);else passages[existing]={...passages[existing],...item};storePassages();
-  activeTab='mine';mine('지문을 읽고 고난도 문제를 만드는 중이에요…');
+async function generatePassage(item,imageData=null) {
+  if(!imageData&&(item.text.length<40||item.text.length>6000)){const notice=document.getElementById('generationMessage');if(notice){notice.classList.add('error');notice.textContent='지문은 40~6,000자로 넣어 주세요.';}return;}
+  if(!imageData){const existing=passages.findIndex(entry=>entry.id===item.id);if(existing<0)passages.unshift(item);else passages[existing]={...passages[existing],...item};storePassages();}
   const button=document.getElementById('generateButton');if(button)button.disabled=true;
-  const message=document.getElementById('generationMessage');if(message)message.innerHTML='<span class="spinner"></span>지문을 읽고, 근거가 있는 문제를 만들고 있어요.';
+  const message=document.getElementById('generationMessage');if(message){message.classList.remove('error');message.innerHTML='<span class="spinner"></span>지문을 읽고, 근거가 있는 문제를 만들고 있어요.';}
   try {
-    const response=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:item.title,passage:item.text})});
+    const response=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:item.title,passage:imageData?'':item.text,...(imageData?{image:imageData}:{})})});
     let data={};try{data=await response.json();}catch{}
-    if(!response.ok)throw new Error(data.error||`문제 생성에 실패했어요. (${response.status})`);
+    if(response.status===405)throw new Error(await explain405());
+    if(!response.ok){
+      if(imageData&&typeof data.passage==='string'&&data.passage.trim()){
+        const extracted=data.passage;document.getElementById('passageText').value=extracted;document.getElementById('passageImage').value='';previewSelectedImage(null);
+        const draft={...item,text:extracted};const index=passages.findIndex(entry=>entry.id===item.id);if(index<0)passages.unshift(draft);else passages[index]={...passages[index],...draft};storePassages();
+        throw new Error(`${data.error||'아직 5개 문제를 만들지 못했어요.'} 사진에서 읽은 지문을 입력란에 옮겼습니다. 확인·수정한 뒤 ‘문제 만들기’를 다시 눌러 주세요.`);
+      }
+      throw new Error(data.error||`문제 생성에 실패했어요. (${response.status})`);
+    }
     if(!Array.isArray(data.questions)||data.questions.length<1)throw new Error('문제를 받지 못했어요. 지문을 확인하고 다시 시도해 주세요.');
-    const questions=data.questions.map(q=>({...q,p:item.text,c:`내 지문 · ${item.title}`,sourceId:item.id}));
-    const ix=passages.findIndex(entry=>entry.id===item.id);passages[ix]={...passages[ix],questions,generatedAt:new Date().toISOString()};storePassages();history.replaceState(null,'',`?passage=${encodeURIComponent(item.id)}`);mine('지문에 맞는 문제가 준비됐어요.');
-  } catch(error) { mine(`${error.message||'문제 생성에 실패했어요.'} 지문은 저장했으니 다시 시도할 수 있어요.`,true);history.replaceState(null,'',`?passage=${encodeURIComponent(item.id)}`); }
+    const sourceText=typeof data.passage==='string'&&data.passage?data.passage:item.text;
+    const questions=data.questions.map(q=>({...q,p:sourceText,c:`내 지문 · ${item.title}`,sourceId:item.id}));
+    const saved={...item,text:sourceText,questions,generatedAt:new Date().toISOString()};const ix=passages.findIndex(entry=>entry.id===item.id);if(ix<0)passages.unshift(saved);else passages[ix]={...passages[ix],...saved};storePassages();releaseImagePreview();history.replaceState(null,'',`?passage=${encodeURIComponent(item.id)}`);mine('지문에 맞는 문제가 준비됐어요.');
+  } catch(error) { if(message){message.classList.add('error');message.textContent=`${error.message||'문제 생성에 실패했어요.'}${imageData?'':' 지문은 저장했으니 다시 시도할 수 있어요.'}`;}if(button)button.disabled=false; }
 }
 function deletePassage(id) { if(!confirm('이 지문과 생성한 문제를 삭제할까요?'))return;passages=passages.filter(item=>item.id!==id);storePassages();history.replaceState(null,'',location.pathname);mine('지문을 삭제했어요.'); }
 function showProfile(edit=false) {
