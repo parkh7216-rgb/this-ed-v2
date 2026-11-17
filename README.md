@@ -22,4 +22,4 @@ node --test tests/server.test.js
 
 ## 배포 참고
 
-이 앱의 AI 문제 생성은 Node.js 서버의 `POST /api/generate`를 사용합니다. GitHub Pages는 정적 파일만 제공하므로, 공개 페이지는 Manus에 별도로 게시한 Node.js API를 호출합니다. 백엔드는 `/api/health`와 `/api/generate`를 제공하고 `https://parkh7216-rgb.github.io` origin만 CORS로 허용합니다. API 자격 증명은 서버 런타임에서만 사용하며 브라우저 설정과 공개 저장소에 넣지 않습니다. Manus Preview와 게시 앱은 자체 서버의 상대 `/api` 경로를 사용합니다. GitHub 저장소에 코드를 올리는 것만으로 Node.js 서버가 배포되지는 않으므로, Manus 컨테이너 게시와 Pages 갱신이 각각 필요합니다.
+이 앱의 AI 문제 생성은 Node.js 서버의 `POST /api/generate`를 사용합니다. GitHub Pages는 정적 파일만 제공하므로 공개 페이지는 [Manus Node.js API](https://thised-haw6abzs.manus.space)의 `/api/generate`를 호출합니다. 백엔드는 `/api/health`와 `/api/generate`를 제공하고 `https://parkh7216-rgb.github.io` origin만 CORS로 허용합니다. API 자격 증명은 서버 런타임에서만 사용하며 브라우저 설정과 공개 저장소에 넣지 않습니다. Manus Preview와 게시 앱은 자체 서버의 상대 `/api` 경로를 사용합니다. GitHub 저장소에 코드를 올리는 것만으로 Node.js 서버가 배포되지는 않으므로, Manus 컨테이너 게시와 Pages 갱신이 각각 필요합니다.
